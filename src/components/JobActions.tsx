@@ -41,7 +41,7 @@ export function StatusButtons({ jobId, status }: { jobId: number; status: string
             onClick={() => run(() => api(`/api/jobs/${jobId}/status`, "POST", { status: s.value }))}
             className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${status === s.value ? "ring-2 ring-indigo-500 ring-offset-1 " + s.color : s.color + " opacity-70 hover:opacity-100"}`}
           >
-            {s.label} <span className="font-normal">({s.hi})</span>
+           <span className="font-normal">({s.hi})</span>
           </button>
         ))}
       </div>

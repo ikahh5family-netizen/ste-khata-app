@@ -1,0 +1,13 @@
+<svg width="120" height="120" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="orangeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#f97316;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#ea580c;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <circle cx="60" cy="60" r="56" fill="url(#orangeGrad)" />
+  <path d="M20 60 Q60 15 100 60" stroke="rgba(255,255,255,0.2)" stroke-width="4" fill="none" stroke-linecap="round" />
+  <text x="60" y="70" font-family="Arial, sans-serif" font-weight="900" font-size="42" fill="#111827" text-anchor="middle" letter-spacing="-2">STE</text>
+  <text x="60" y="98" font-family="Arial, sans-serif" font-weight="700" font-size="9" fill="#111827" text-anchor="middle">Star Tech Electronics</text>
+  <text x="60" y="110" font-family="Arial, sans-serif" font-weight="600" font-size="7" fill="#111827" text-anchor="middle">Since 2003</text>
+</svg>

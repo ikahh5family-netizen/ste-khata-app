@@ -1,0 +1,25 @@
+{
+  "name": "STE Mobile Care – Repair & Sales Record",
+  "short_name": "STE Mobile Care",
+  "description": "iPhone repair shop by Star Tech Electronics – repair jobs, parts sales, stock, credit khata and expenses, with AI assistant.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f8fafc",
+  "theme_color": "#f97316",
+  "icons": [
+    {
+      "src": "/images/ste-logo.png",
+      "sizes": "any",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/images/ste-logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

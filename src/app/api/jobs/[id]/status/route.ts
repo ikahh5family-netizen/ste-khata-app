@@ -1,0 +1,14 @@
+import { setJobStatusRecord } from "@/lib/mutations";
+
+export const dynamic = "force-dynamic";
+
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    const id = parseInt((await params).id, 10);
+    const { status } = await req.json();
+    await setJobStatusRecord(id, String(status ?? ""));
+    return Response.json({ ok: true });
+  } catch (e) {
+    return Response.json({ ok: false, error: e instanceof Error ? e.message : "Status nahi badal saka" }, { status: 400 });
+  }
+}

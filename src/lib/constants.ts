@@ -1,7 +1,7 @@
 export const SHOP_NAME = process.env.NEXT_PUBLIC_SHOP_NAME || "STE Mobile Care";
 export const SHOP_FULL_NAME = "Star Tech Electronics";
 export const SHOP_TAGLINE = "Since 2003";
-export const SHOP_LOGO = "/images/ste-logo.png";
+export const SHOP_LOGO = "/logo.png";
 
 export const IPHONE_MODELS = [
   "iPhone 17 Pro Max", "iPhone 17 Pro", "iPhone 17 Air", "iPhone 17",

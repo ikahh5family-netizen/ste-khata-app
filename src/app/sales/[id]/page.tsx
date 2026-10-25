@@ -51,7 +51,7 @@ export default async function SaleDetail({
       <div className="print-area card font-mono text-sm">
         <div className="text-center">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/images/ste-logo.png" alt="STE Logo" className="mx-auto h-20 w-20 rounded-xl" />
+          <img src="/logo.png" alt="STE Logo" width={80} height={80} className="mx-auto h-20 w-20 rounded-xl object-cover" />
           <div className="mt-1 text-lg font-bold">{SHOP_FULL_NAME}</div>
           <div className="flex items-center justify-center gap-1 text-xs text-slate-500">
             <AppleLogo className="h-3 w-3" />

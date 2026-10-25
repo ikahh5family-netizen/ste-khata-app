@@ -7,16 +7,16 @@
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#f8fafc",
-  "theme_color": "#f97316",
+  "theme_color": "#111111",
   "icons": [
     {
-      "src": "/images/ste-logo.png",
-      "sizes": "any",
+      "src": "/logo.png",
+      "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/images/ste-logo.png",
+      "src": "/logo.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"

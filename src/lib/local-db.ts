@@ -1,6 +1,7 @@
-/* Client-side local database (localStorage) for offline Backup & Restore.
- * Export/Import work fully on the device — no server or DB connection needed.
- * Server sync (hydrate / restore) is best-effort and only runs when reachable.
+/* Cached backup snapshot in localStorage. Export and import can read/write the
+ * snapshot without a network connection. The application itself still requires
+ * its Next.js server and PostgreSQL database to view/edit live records.
+ * JSON backups are NOT encrypted; keep them in a private place.
  */
 
 export type BackupData = {
@@ -70,7 +71,9 @@ export function totalRecords(counts: Record<string, number>): number {
   return Object.values(counts).reduce((a, b) => a + (Number(b) || 0), 0);
 }
 
-export function getMeta(): { lastSyncedAt?: string; lastImportAt?: string } {
+type LocalMeta = { lastSyncedAt?: string; lastImportAt?: string; pendingRestore?: boolean };
+
+export function getMeta(): LocalMeta {
   const s = storage();
   if (!s) return {};
   try {
@@ -80,7 +83,7 @@ export function getMeta(): { lastSyncedAt?: string; lastImportAt?: string } {
   }
 }
 
-function setMeta(patch: { lastSyncedAt?: string; lastImportAt?: string }) {
+function setMeta(patch: Partial<LocalMeta>) {
   const s = storage();
   if (!s) return;
   s.setItem(META_KEY, JSON.stringify({ ...getMeta(), ...patch }));
@@ -93,7 +96,7 @@ export function replaceAll(data: BackupData) {
 
 /** Mark that a restore/import happened (shown on the dashboard card). */
 export function markImported() {
-  setMeta({ lastImportAt: new Date().toISOString() });
+  setMeta({ lastImportAt: new Date().toISOString(), pendingRestore: true });
 }
 
 /** SHA-256 of a string (Web Crypto). Returns null when unavailable (non-secure context). */
@@ -179,17 +182,17 @@ export async function pushLocalToServer(): Promise<{ ok: boolean; error?: string
   });
   const j = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
   if (!res.ok || !j.ok) return { ok: false, error: j.error || "server restore failed" };
-  setMeta({ lastSyncedAt: new Date().toISOString() });
+  setMeta({ lastSyncedAt: new Date().toISOString(), pendingRestore: false });
   return { ok: true };
 }
 
 export type SyncMode = "server-to-local" | "local-to-server" | "offline" | "empty";
 
 /**
- * Smart sync on dashboard load:
- * - server has data  -> local store refreshed from server (server is source of truth)
- * - server empty but local has data -> push local to server (self-healing restore)
- * - server unreachable -> keep using local data (offline mode)
+ * Synchronize the cached backup snapshot on dashboard load.
+ * A deliberate offline import is pushed first; otherwise a nonempty server
+ * takes precedence. If the server is unreachable the snapshot remains on the
+ * device, but the live jobs and sales pages still require the server.
  */
 export async function smartSync(): Promise<{ mode: SyncMode; counts: Record<string, number> }> {
   const localCounts = getCounts();
@@ -199,6 +202,11 @@ export async function smartSync(): Promise<{ mode: SyncMode; counts: Record<stri
     if (!res.ok) throw new Error("server unreachable");
     const b = (await res.json()) as { counts?: Record<string, number>; data?: BackupData };
     const serverTotal = totalRecords(b.counts ?? {});
+    // A deliberate offline import must be restored before reading a possibly stale server snapshot.
+    if (getMeta().pendingRestore) {
+      const r = await pushLocalToServer();
+      return { mode: r.ok ? "local-to-server" : "offline", counts: getCounts() };
+    }
     if (serverTotal > 0 && b.data) {
       replaceAll(b.data);
       setMeta({ lastSyncedAt: new Date().toISOString() });

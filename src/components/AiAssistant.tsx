@@ -4,8 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 type Msg = { role: "user" | "assistant"; content: string };
-type AiProvider = "built-in" | "mistral-large-4" | "openai";
-type Availability = { mistral: boolean; openai: boolean };
 type Parsed =
   | { type: "job"; customerName: string; phone: string; deviceModel: string; repairType: string; total: number; paid: number; imei: string; issue: string }
   | { type: "expense"; category: string; amount: number; note: string }
@@ -82,31 +80,10 @@ function useVoice(onText: (t: string) => void) {
   return { listening, toggle, supported };
 }
 
-export function AiAssistant({ availability }: { availability: Availability }) {
+export function AiAssistant({ aiMode }: { aiMode: boolean }) {
   const [tab, setTab] = useState<"chat" | "entry">("chat");
-  const [provider, setProvider] = useState<AiProvider>(availability.mistral ? "mistral-large-4" : availability.openai ? "openai" : "built-in");
   return (
     <div>
-      <div className="mb-4 flex flex-wrap items-center gap-3 rounded-2xl border border-orange-200 bg-orange-50/70 p-3 sm:p-4">
-        <label htmlFor="ai-provider" className="text-sm font-semibold text-slate-800">AI model</label>
-        <select
-          id="ai-provider"
-          value={provider}
-          onChange={(event) => setProvider(event.target.value as AiProvider)}
-          className="input max-w-xs border-orange-200 font-medium focus:border-orange-500 focus:ring-orange-100"
-        >
-          <option value="built-in">Built-in insights · free</option>
-          <option value="mistral-large-4" disabled={!availability.mistral}>Mistral Large 4{availability.mistral ? " · ready" : " · API key needed"}</option>
-          <option value="openai" disabled={!availability.openai}>OpenAI{availability.openai ? " · ready" : " · API key needed"}</option>
-        </select>
-        <p className="text-xs leading-relaxed text-slate-600">
-          {provider === "mistral-large-4"
-            ? "Mistral Large 4 is selected. If its API is unavailable, the built-in assistant answers instead."
-            : availability.mistral
-              ? "Choose Mistral Large 4 for advanced answers. API credentials stay on the server."
-              : "To enable Mistral Large 4, add MISTRAL_API_KEY to your server environment. The built-in assistant works without a key."}
-        </p>
-      </div>
       <div className="mb-4 inline-flex rounded-xl border border-slate-200 bg-white p-1">
         <button onClick={() => setTab("chat")} className={`rounded-lg px-4 py-2 text-sm font-semibold ${tab === "chat" ? "bg-indigo-600 text-white" : "text-slate-600"}`}>
           💬 Ask Questions
@@ -115,16 +92,16 @@ export function AiAssistant({ availability }: { availability: Availability }) {
           ⚡ Type/Speak Entry
         </button>
       </div>
-      {tab === "chat" ? <Chat provider={provider} /> : <QuickEntry provider={provider} />}
+      {tab === "chat" ? <Chat aiMode={aiMode} /> : <QuickEntry />}
     </div>
   );
 }
 
-function Chat({ provider }: { provider: AiProvider }) {
+function Chat({ aiMode }: { aiMode: boolean }) {
   const [msgs, setMsgs] = useState<Msg[]>([
     {
       role: "assistant",
-      content: "Hello! 🙏 I'm your shop's AI assistant. Ask me about today's earnings, dues, stock, top repairs and profit.",
+      content: `Hello! 🙏 I'm your shop's AI assistant${aiMode ? " (GPT powered)" : ""}.\nAsk me about today's earnings, dues, stock, top repairs, profit — anything.`,
     },
   ]);
   const [input, setInput] = useState("");
@@ -147,7 +124,7 @@ function Chat({ provider }: { provider: AiProvider }) {
       const r = await fetch("/api/ai/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: m, history, provider }),
+        body: JSON.stringify({ message: m, history }),
       });
       const d = (await r.json()) as { reply?: string; error?: string };
       setMsgs((p) => [...p, { role: "assistant", content: d.reply ?? d.error ?? "Error" }]);
@@ -201,7 +178,7 @@ function Chat({ provider }: { provider: AiProvider }) {
   );
 }
 
-function QuickEntry({ provider }: { provider: AiProvider }) {
+function QuickEntry() {
   const router = useRouter();
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(false);
@@ -223,7 +200,7 @@ function QuickEntry({ provider }: { provider: AiProvider }) {
       const r = await fetch("/api/ai/parse", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: v, provider }),
+        body: JSON.stringify({ text: v }),
       });
       const d = (await r.json()) as { parsed?: Parsed; matches?: { id: number; name: string; phone: string }[]; error?: string };
       setParsed(d.parsed ?? { type: "unknown", message: d.error ?? "Error" });

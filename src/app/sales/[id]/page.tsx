@@ -4,11 +4,12 @@ import { db } from "@/db";
 import { ensureSchema } from "@/db/ensure";
 import { sales, saleItems } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { SHOP_NAME, SHOP_FULL_NAME } from "@/lib/constants";
-import { rs, fmtDateTime, invNo, waLink } from "@/lib/format";
+import { SHOP_NAME, SHOP_FULL_NAME, SHOP_PHONE, SHOP_ADDRESS } from "@/lib/constants";
+import { rs, fmtDateTime, fmtDateTimeFull, invNo, waLink } from "@/lib/format";
 import { PrintButton } from "@/components/PrintButton";
 import { ConfirmDeleteButton } from "@/components/ApiForm";
 import { AppleLogo } from "@/components/ui";
+import { Logo } from "@/components/Logo";
 
 export const dynamic = "force-dynamic";
 
@@ -48,23 +49,41 @@ export default async function SaleDetail({
           </a>
         )}
       </div>
-      <div className="print-area card font-mono text-sm">
-        <div className="text-center">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo.png" alt="STE Logo" width={80} height={80} className="mx-auto h-20 w-20 rounded-xl object-cover" />
-          <div className="mt-1 text-lg font-bold">{SHOP_FULL_NAME}</div>
-          <div className="flex items-center justify-center gap-1 text-xs text-slate-500">
-            <AppleLogo className="h-3 w-3" />
-            iPhone &amp; Mobile Repair · Parts · Accessories · Since 2003
+      <div className="print-area overflow-hidden rounded-2xl border border-neutral-300 bg-white text-sm shadow-sm">
+        <div className="bg-black px-4 py-3">
+          <div className="flex items-center gap-3">
+            <Logo className="h-14 w-14 ring-2 ring-orange-500 print:ring-white" rounded="rounded-lg" />
+            <div className="min-w-0 flex-1">
+              <div className="text-lg font-extrabold leading-tight tracking-wide text-orange-400 print:text-white">{SHOP_FULL_NAME}</div>
+              <div className="flex items-center gap-1 text-[10px] leading-tight text-neutral-300 print:text-white">
+                <AppleLogo className="h-2.5 w-2.5" />
+                iPhone &amp; Mobile Repair · Parts · Accessories · Since 2003
+              </div>
+            </div>
           </div>
-          <div className="mt-2 border-y border-dashed border-slate-300 py-1 font-bold">CASH MEMO</div>
+          {(SHOP_ADDRESS || SHOP_PHONE) && (
+            <div className="mt-2 space-y-0.5 border-t border-neutral-700 pt-1.5 text-[10px] leading-snug text-neutral-300 print:border-white print:text-white">
+              {SHOP_ADDRESS && <div>📍 {SHOP_ADDRESS}</div>}
+              {SHOP_PHONE && <div>📞 {SHOP_PHONE}</div>}
+            </div>
+          )}
         </div>
-        <div className="mt-2 flex justify-between text-xs">
-          <span>{invNo(s.id)}</span>
-          <span>{fmtDateTime(s.createdAt)}</span>
+        <div className="flex items-center justify-between bg-orange-500 px-4 py-1.5 print:bg-black">
+          <span className="text-sm font-extrabold tracking-widest text-black print:text-white">CASH MEMO</span>
+          <span className="rounded bg-black px-2 py-0.5 text-[11px] font-bold tracking-wide text-orange-400 print:bg-white print:text-black">{invNo(s.id)}</span>
+        </div>
+        <div className="relative px-4 py-3">
+          <div aria-hidden className="pointer-events-none absolute inset-0 z-0 flex items-center justify-center overflow-hidden">
+            <span className="select-none text-[88px] font-extrabold leading-none tracking-widest text-neutral-900/[0.055] print:text-neutral-900/[0.07]">
+              STE
+            </span>
+          </div>
+          <div className="relative z-10">
+        <div className="flex justify-between text-xs">
+          <span className="text-neutral-500">{fmtDateTimeFull(s.createdAt)}</span>
         </div>
         <div className="text-xs">
-          Customer: {s.customerName} {s.phone}
+          <b>Customer:</b> {s.customerName} {s.phone}
         </div>
         <table className="mt-3 w-full text-xs">
           <thead>
@@ -112,7 +131,11 @@ export default async function SaleDetail({
             </div>
           )}
         </div>
-        <div className="mt-4 text-center text-xs text-slate-500">Thank you! Please visit again 🙏</div>
+          </div>
+        </div>
+        <div className="bg-black px-4 py-1.5 text-center text-[10px] font-semibold tracking-wide text-orange-400 print:text-white">
+          Thank you! Please visit again 🙏
+        </div>
       </div>
       <div className="no-print mt-4 text-sm text-slate-500">
         Profit: <b className="text-emerald-600">{rs(s.total - s.cost)}</b>

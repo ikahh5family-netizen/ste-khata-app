@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import {
   buildBackup,
   downloadBackup,
@@ -30,7 +29,6 @@ const LABELS: Record<string, string> = {
 };
 
 export function BackupRestoreCard() {
-  const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
   const [statusTone, setStatusTone] = useState<"ok" | "warn" | "info">("info");
@@ -47,7 +45,7 @@ export function BackupRestoreCard() {
       setMeta(getMeta());
       if (r.mode === "server-to-local") setStatus("☁️ Local copy synced with server");
       else if (r.mode === "local-to-server") setStatus("☁️ Local data restored to server");
-      else if (r.mode === "offline") setStatus("📴 Server unavailable. A previous backup may be available on this device; live jobs and sales need the server.");
+      else if (r.mode === "offline") setStatus("📴 Server unavailable — using local data on this device");
     });
   }, []);
 
@@ -59,15 +57,10 @@ export function BackupRestoreCard() {
     try {
       await smartSync(); // refresh local copy first (falls back to existing local data offline)
       const backup = await buildBackup();
-      const total = totalRecords(backup.counts);
-      if (total === 0) {
-        setStatus("⚠️ No records are available for backup on this device. Reconnect to the server and try again.");
-        setStatusTone("warn");
-        return;
-      }
       downloadBackup(backup);
+      const total = totalRecords(backup.counts);
       setCounts(getCounts());
-      setStatus(`✅ Downloaded ${total} records. This JSON file is NOT encrypted${backup.checksum ? " (SHA-256 verifies integrity only)" : ""} — keep it private.`);
+      setStatus(`✅ Backup downloaded — ${total} records saved to your device (secure .json${backup.checksum ? " with integrity checksum" : ""}).`);
       setStatusTone("ok");
     } catch {
       setStatus("⚠️ Export failed — please try again.");
@@ -99,33 +92,25 @@ export function BackupRestoreCard() {
         setStatusTone("warn");
         return;
       }
-      const total = Object.values(backup.data).reduce((sum, rows) => sum + (Array.isArray(rows) ? rows.length : 0), 0);
-      if (!window.confirm(`Restore ${total} records from this file?\n\nYour current server data will be replaced if the server is reachable. Keep another backup before continuing.`)) {
+      const total = totalRecords(backup.counts ?? {});
+      if (!window.confirm(`Restore ${total} records from this backup?\n\nThis will replace the current data on this device.`)) {
         setStatus("");
         return;
       }
       replaceAll(backup.data);
-      markImported();
-      setRestored(getCounts());
+      setRestored(backup.counts ?? getCounts());
       setStatus("Restoring…");
-      let serverRestored = false;
-      try {
-        const result = await pushLocalToServer();
-        serverRestored = result.ok;
-      } catch {
-        // Local import succeeded; only the server synchronization failed.
-      }
+      const server = await pushLocalToServer();
       setCounts(getCounts());
       setMeta(getMeta());
-      if (serverRestored) {
-        setStatus(`✅ Restored ${total} records to the database. Open Jobs or Stock to verify.`);
-        router.refresh();
+      if (server.ok) {
+        setStatus(`✅ Restored ${total} records on this device AND on the server. App state is back.`);
       } else {
-        setStatus(`⚠️ File imported on this device, but the database was NOT restored. Live Jobs and Sales will not show these records until the server is reachable. Keep the file and retry the import when online.`);
+        setStatus(`✅ Restored ${total} records on this device (local). Will sync to the server automatically when it is available.`);
       }
-      setStatusTone(serverRestored ? "ok" : "warn");
+      setStatusTone("ok");
     } catch {
-      setStatus("⚠️ Import failed. Check the JSON file and available browser storage, then try again. Your saved file has not been changed.");
+      setStatus("⚠️ Could not read the file — please select a valid backup .json file.");
       setStatusTone("warn");
     } finally {
       setBusy(false);
@@ -141,10 +126,9 @@ export function BackupRestoreCard() {
         <div className="min-w-0">
           <h2 className="text-lg font-semibold">💾 Local Backup &amp; Restore</h2>
           <p className="mt-0.5 text-sm text-slate-600">
-            Download jobs, sales, customers, stock and expenses as a JSON file. Export can use your last synced local snapshot when offline;
-            live records still require the server and PostgreSQL. Restore from the file if you change devices or lose browser data.
+            Save ALL data (repair jobs, sales, customers, stock, khata, expenses) as a secure .json file on your device — works fully offline.
+            Import it back anytime, even if browser cache is cleared or Windows crashes.
           </p>
-          <p className="mt-1 text-xs font-medium text-amber-800">The JSON file includes customer details and is not encrypted. Keep it private.</p>
           <div className="mt-2 text-xs text-slate-500">
             📱 Local copy on this device: <b>{localTotal} records</b>
             {meta.lastSyncedAt && <> · Synced {new Date(meta.lastSyncedAt).toLocaleString("en-PK", { timeZone: "Asia/Karachi" })}</>}

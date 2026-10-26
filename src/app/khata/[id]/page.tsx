@@ -5,7 +5,7 @@ import { ensureSchema } from "@/db/ensure";
 import { customers, repairJobs, sales, payments } from "@/db/schema";
 import { desc, eq } from "drizzle-orm";
 import { StatCard, StatusBadge } from "@/components/ui";
-import { ApiForm, ApiActionButton } from "@/components/ApiForm";
+import { ApiForm, ApiActionButton, ConfirmDeleteButton } from "@/components/ApiForm";
 import { rs, fmtDateTime, jobNo, invNo, waLink } from "@/lib/format";
 import { PAYMENT_MODES, SHOP_NAME } from "@/lib/constants";
 
@@ -170,6 +170,16 @@ export default async function CustomerLedger({ params }: { params: Promise<{ id:
               Save
             </button>
           </ApiForm>
+
+          {jobs.length === 0 && sl.length === 0 && (
+            <ConfirmDeleteButton
+              endpoint="/api/khata"
+              payload={{ action: "deleteCustomer", id: c.id }}
+              confirmText="Delete this customer permanently?"
+            >
+              🗑️ Delete Customer
+            </ConfirmDeleteButton>
+          )}
         </div>
       </div>
     </div>

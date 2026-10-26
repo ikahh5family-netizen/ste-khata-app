@@ -12,8 +12,7 @@ import {
   expenses,
   purchases,
 } from "@/db/schema";
-import { and, eq, ne, sql } from "drizzle-orm";
-import { JOB_STATUSES } from "@/lib/constants";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { str, toInt } from "@/lib/format";
 
@@ -24,6 +23,12 @@ export type ActionResult = {
   message?: string;
   error?: string;
 };
+
+class OutOfStockError extends Error {
+  constructor(public partName: string) {
+    super("out of stock");
+  }
+}
 
 function refreshAll() {
   try {
@@ -92,7 +97,6 @@ export async function createJobRecord(data: Record<string, unknown>): Promise<Ac
     }
   }
 
-  const advancePaid = Math.max(0, toInt(data.paid, 0));
   const customerId = await findOrCreateCustomer(customerName, phone);
   const [job] = await db
     .insert(repairJobs)
@@ -107,8 +111,9 @@ export async function createJobRecord(data: Record<string, unknown>): Promise<Ac
       issue: str(data.issue),
       total: Math.max(0, toInt(data.total, 0)),
       partsCost: Math.max(0, extraPartsCost),
-      paid: advancePaid,
-      advancePaid,
+      paid: Math.max(0, toInt(data.paid, 0)),
+      // The money taken when the phone is received is the advance.
+      advancePaid: Math.max(0, toInt(data.paid, 0)),
       warrantyDays: Math.max(0, toInt(data.warrantyDays, 30)),
       technician: str(data.technician),
       notes: str(data.notes),
@@ -147,14 +152,23 @@ export async function updateJobRecord(data: Record<string, unknown>): Promise<Ac
     return { ok: false, error: "Model and repair type are required" };
   }
 
-  const [existing] = await db.select({ paid: repairJobs.paid, status: repairJobs.status }).from(repairJobs).where(eq(repairJobs.id, id));
+  const [existing] = await db.select().from(repairJobs).where(eq(repairJobs.id, id));
   if (!existing) return { ok: false, error: "Job not found" };
-  const correctedAdvance = data.advancePaid !== undefined ? Math.max(0, toInt(data.advancePaid, 0)) : null;
-  if (correctedAdvance !== null && existing.status === "delivered" && correctedAdvance > existing.paid) {
-    return { ok: false, error: "Recorded advance cannot exceed the amount already paid" };
-  }
 
   const customerId = await findOrCreateCustomer(customerName, phone);
+  const total = Math.max(0, toInt(data.total, 0));
+
+  // "Recorded advance" — lets the owner correct the advance on old jobs that
+  // were created before the advance was tracked separately. It can never be
+  // more than what the customer has actually paid.
+  const advanceGiven = data.advancePaid !== undefined && data.advancePaid !== null && str(data.advancePaid) !== "";
+  const advancePaid = advanceGiven ? Math.min(Math.max(0, toInt(data.advancePaid, 0)), existing.paid) : existing.advancePaid;
+
+  // While the phone is still in the shop, paid === advance (there is no
+  // delivery payment yet), so keep the two in sync.
+  const isDelivered = existing.status === "delivered";
+  const paid = advanceGiven && !isDelivered ? advancePaid : existing.paid;
+
   await db
     .update(repairJobs)
     .set({
@@ -166,12 +180,9 @@ export async function updateJobRecord(data: Record<string, unknown>): Promise<Ac
       passcode: str(data.passcode),
       repairType,
       issue: str(data.issue),
-      total: Math.max(0, toInt(data.total, 0)),
-      ...(correctedAdvance === null ? {} : {
-        advancePaid: correctedAdvance,
-        // Delivered receipts stay intact; before delivery, Paid equals the corrected advance.
-        paid: sql`CASE WHEN ${repairJobs.status} = 'delivered' THEN ${repairJobs.paid} ELSE ${correctedAdvance} END`,
-      }),
+      total,
+      advancePaid,
+      paid,
       warrantyDays: Math.max(0, toInt(data.warrantyDays, 0)),
       technician: str(data.technician),
       notes: str(data.notes),
@@ -186,51 +197,69 @@ export async function setJobStatusRecord(data: Record<string, unknown>): Promise
   await ensureSchema();
   const id = toInt(data.id);
   const status = str(data.status);
-  if (!id || !JOB_STATUSES.some((item) => item.value === status)) return { ok: false, error: "Invalid status update" };
+  if (!id || !status) return { ok: false, error: "Invalid status update" };
 
-  // This update is atomic: on leaving Delivered, remove only the money attributed
-  // to delivery and leave the original advance intact. Non-delivered changes do
-  // not invent a payment, and selecting Delivered does not auto-collect money.
-  const [updated] = await db
+  const [job] = await db.select().from(repairJobs).where(eq(repairJobs.id, id));
+  if (!job) return { ok: false, error: "Job not found" };
+
+  if (status === "delivered") {
+    // Moving TO delivered via the status chips: keep whatever has been paid so
+    // far (the advance). Collecting the balance is done in the Deliver form.
+    await db
+      .update(repairJobs)
+      .set({ status, deliveredAt: new Date() })
+      .where(eq(repairJobs.id, id));
+    refreshAll();
+    return { ok: true, id, message: "Marked as delivered." };
+  }
+
+  // Moving BACK to a non-delivered status (Received / In Progress /
+  // Waiting Part / Cancelled): the delivery payment is no longer valid, so
+  // `paid` reverts to the advance that was actually taken, and `due` grows
+  // back automatically. Print receipt reads these same fields.
+  const advance = Math.max(0, job.advancePaid);
+  const reverted = job.paid !== advance;
+
+  await db
     .update(repairJobs)
-    .set({
-      status,
-      deliveredAt: status === "delivered" ? sql`coalesce(${repairJobs.deliveredAt}, now())` : null,
-      paid: status === "delivered"
-        ? sql`${repairJobs.paid}`
-        : sql`CASE WHEN ${repairJobs.status} = 'delivered' THEN ${repairJobs.advancePaid} ELSE ${repairJobs.paid} END`,
-    })
-    .where(eq(repairJobs.id, id))
-    .returning({ id: repairJobs.id });
-  if (!updated) return { ok: false, error: "Job not found" };
+    .set({ status, deliveredAt: null, paid: advance })
+    .where(eq(repairJobs.id, id));
 
   refreshAll();
-  return { ok: true, id };
+  return {
+    ok: true,
+    id,
+    message: reverted
+      ? `Status changed — Paid reset to the advance (${advance > 0 ? "Rs " + advance.toLocaleString("en-PK") : "Rs 0"}).`
+      : "Status updated.",
+  };
 }
 
 export async function deliverJobRecord(data: Record<string, unknown>): Promise<ActionResult> {
   await ensureSchema();
   const id = toInt(data.id);
-  if (!id) return { ok: false, error: "Invalid job ID" };
   const receive = Math.max(0, toInt(data.receive, 0));
   const finalTotal = data.total !== undefined && data.total !== null && str(data.total) !== "" ? Math.max(0, toInt(data.total)) : null;
 
-  // A double tap / repeated request cannot charge the customer twice.
-  const [updated] = await db
+  const [job] = await db.select().from(repairJobs).where(eq(repairJobs.id, id));
+  if (!job) return { ok: false, error: "Job not found" };
+
+  // `advancePaid` stays as the pre-delivery amount so the payment collected
+  // at delivery can be rolled back if the status is changed again later.
+  const advance = Math.max(0, job.advancePaid);
+  // Never let `paid` exceed the bill — that would create a negative "Due".
+  const billTotal = finalTotal !== null ? finalTotal : job.total;
+  const collected = Math.min(receive, Math.max(0, billTotal - advance));
+  await db
     .update(repairJobs)
     .set({
       status: "delivered",
       deliveredAt: new Date(),
-      paid: sql`${repairJobs.paid} + ${receive}`,
+      paid: advance + collected,
       ...(finalTotal !== null ? { total: finalTotal } : {}),
     })
-    .where(and(eq(repairJobs.id, id), ne(repairJobs.status, "delivered"), ne(repairJobs.status, "cancelled")))
-    .returning({ id: repairJobs.id });
+    .where(eq(repairJobs.id, id));
 
-  if (!updated) {
-    const [job] = await db.select({ status: repairJobs.status }).from(repairJobs).where(eq(repairJobs.id, id));
-    return { ok: false, error: !job ? "Job not found" : job.status === "cancelled" ? "Reopen this cancelled job before delivery" : "This job is already delivered; payment was not added twice" };
-  }
   refreshAll();
   return { ok: true, id, message: "Phone marked as delivered!" };
 }
@@ -241,19 +270,29 @@ export async function addJobPaymentRecord(data: Record<string, unknown>): Promis
   const amount = toInt(data.amount);
   if (!id || amount <= 0) return { ok: false, error: "Enter a valid payment amount" };
 
-  const [updated] = await db
+  const [job] = await db.select().from(repairJobs).where(eq(repairJobs.id, id));
+  if (!job) return { ok: false, error: "Job not found" };
+
+  const remaining = Math.max(0, job.total - job.paid);
+  if (remaining === 0) return { ok: false, error: "This job is already fully paid." };
+  if (amount > remaining) {
+    return { ok: false, error: `Only Rs ${remaining.toLocaleString("en-PK")} is due on this job.` };
+  }
+
+  // A payment taken while the phone is still in the shop counts as advance,
+  // so it survives any later status change. After delivery it is a final
+  // settlement and only increases `paid`.
+  const isDelivered = job.status === "delivered";
+  await db
     .update(repairJobs)
     .set({
       paid: sql`${repairJobs.paid} + ${amount}`,
-      // Any money received before delivery is an advance, not a delivery payment.
-      advancePaid: sql`CASE WHEN ${repairJobs.status} = 'delivered' THEN ${repairJobs.advancePaid} ELSE ${repairJobs.advancePaid} + ${amount} END`,
+      ...(isDelivered ? {} : { advancePaid: sql`${repairJobs.advancePaid} + ${amount}` }),
     })
-    .where(eq(repairJobs.id, id))
-    .returning({ id: repairJobs.id });
-  if (!updated) return { ok: false, error: "Job not found" };
+    .where(eq(repairJobs.id, id));
 
   refreshAll();
-  return { ok: true, id, message: "Payment recorded" };
+  return { ok: true, id, message: "Payment added!" };
 }
 
 export async function addJobPartRecord(data: Record<string, unknown>): Promise<ActionResult> {
@@ -269,8 +308,19 @@ export async function addJobPartRecord(data: Record<string, unknown>): Promise<A
   if (partId > 0) {
     const [p] = await db.select().from(parts).where(eq(parts.id, partId));
     if (!p) return { ok: false, error: "Part not found in stock" };
+    if (qty > p.stock) {
+      return { ok: false, error: `Only ${p.stock} pcs of "${p.name}" left in stock.` };
+    }
+    // Atomic guard: only decrement when enough stock is still there.
+    const dec = await db
+      .update(parts)
+      .set({ stock: sql`${parts.stock} - ${qty}` })
+      .where(and(eq(parts.id, partId), sql`${parts.stock} >= ${qty}`))
+      .returning({ id: parts.id });
+    if (dec.length === 0) {
+      return { ok: false, error: `"${p.name}" just went out of stock — please refresh and try again.` };
+    }
     await db.insert(jobParts).values({ jobId, partId, name: p.name, qty, cost: p.costPrice });
-    await db.update(parts).set({ stock: sql`${parts.stock} - ${qty}` }).where(eq(parts.id, partId));
     await db
       .update(repairJobs)
       .set({ partsCost: sql`${repairJobs.partsCost} + ${p.costPrice * qty}` })
@@ -286,7 +336,7 @@ export async function addJobPartRecord(data: Record<string, unknown>): Promise<A
   }
 
   refreshAll();
-  return { ok: true, id: jobId, message: "Part job mein add ho gaya!" };
+  return { ok: true, id: jobId, message: "Part added to the job!" };
 }
 
 export async function removeJobPartRecord(data: Record<string, unknown>): Promise<ActionResult> {
@@ -308,11 +358,53 @@ export async function removeJobPartRecord(data: Record<string, unknown>): Promis
   return { ok: true };
 }
 
+/**
+ * Remove a customer record that no longer has any history.
+ * Customers are created automatically when a job/sale is saved, so after the
+ * last job/sale is deleted an empty "ghost" customer would otherwise stay in
+ * the Khata list forever. A customer with notes is treated as manually
+ * created and is always kept.
+ */
+export async function cleanupOrphanCustomer(customerId: number | null | undefined): Promise<boolean> {
+  if (!customerId) return false;
+  const [c] = await db.select().from(customers).where(eq(customers.id, customerId));
+  if (!c || c.notes.trim()) return false;
+
+  const [{ n }] = await db
+    .select({
+      n: sql<number>`(
+        (select count(*) from ${repairJobs} where ${repairJobs.customerId} = ${customerId}) +
+        (select count(*) from ${sales} where ${sales.customerId} = ${customerId}) +
+        (select count(*) from ${payments} where ${payments.customerId} = ${customerId})
+      )::int`,
+    })
+    .from(customers)
+    .where(eq(customers.id, customerId))
+    .limit(1);
+
+  if ((n ?? 0) > 0) return false;
+  await db.delete(customers).where(eq(customers.id, customerId));
+  return true;
+}
+
+/** Remove every customer that has no jobs, no sales, no payments and no notes. */
+export async function cleanupAllOrphanCustomers(): Promise<number> {
+  const res = await db.execute(sql`
+    DELETE FROM customers c
+    WHERE btrim(c.notes) = ''
+      AND NOT EXISTS (SELECT 1 FROM repair_jobs j WHERE j.customer_id = c.id)
+      AND NOT EXISTS (SELECT 1 FROM sales s      WHERE s.customer_id = c.id)
+      AND NOT EXISTS (SELECT 1 FROM payments p   WHERE p.customer_id = c.id)
+  `);
+  return res.rowCount ?? 0;
+}
+
 export async function deleteJobRecord(data: Record<string, unknown>): Promise<ActionResult> {
   await ensureSchema();
   const id = toInt(data.id);
   if (!id) return { ok: false, error: "Invalid job ID" };
 
+  const [job] = await db.select().from(repairJobs).where(eq(repairJobs.id, id));
   const used = await db.select().from(jobParts).where(eq(jobParts.jobId, id));
   for (const jp of used) {
     if (jp.partId) {
@@ -320,9 +412,37 @@ export async function deleteJobRecord(data: Record<string, unknown>): Promise<Ac
     }
   }
   await db.delete(repairJobs).where(eq(repairJobs.id, id));
+  await cleanupOrphanCustomer(job?.customerId);
 
   refreshAll();
   return { ok: true, redirectTo: "/jobs" };
+}
+
+export async function deleteCustomerRecord(data: Record<string, unknown>): Promise<ActionResult> {
+  await ensureSchema();
+  const id = toInt(data.id);
+  if (!id) return { ok: false, error: "Invalid customer ID" };
+
+  const [{ n }] = await db
+    .select({
+      n: sql<number>`(
+        (select count(*) from ${repairJobs} where ${repairJobs.customerId} = ${id}) +
+        (select count(*) from ${sales} where ${sales.customerId} = ${id})
+      )::int`,
+    })
+    .from(customers)
+    .where(eq(customers.id, id))
+    .limit(1);
+
+  if ((n ?? 0) > 0) {
+    return { ok: false, error: "This customer has jobs or sales — delete those records first." };
+  }
+
+  await db.delete(payments).where(eq(payments.customerId, id));
+  await db.delete(customers).where(eq(customers.id, id));
+
+  refreshAll();
+  return { ok: true, redirectTo: "/khata", message: "Customer deleted." };
 }
 
 /* ---------------- Inventory / Stock ---------------- */
@@ -339,7 +459,7 @@ export async function savePartRecord(data: Record<string, unknown>): Promise<Act
     model: str(data.model),
     costPrice: Math.max(0, toInt(data.costPrice, 0)),
     salePrice: Math.max(0, toInt(data.salePrice, 0)),
-    stock: toInt(data.stock, 0),
+    stock: Math.max(0, toInt(data.stock, 0)),
     minStock: Math.max(0, toInt(data.minStock, 1)),
   };
 
@@ -423,8 +543,26 @@ export async function createSaleRecord(input: SaleInput): Promise<ActionResult> 
 
   if (!items.length) return { ok: false, error: "Add at least one item to the bill" };
 
+  // Block selling more than what is physically in stock (custom items with
+  // partId = null are not stock-tracked, so they are skipped).
+  const wanted = new Map<number, number>();
+  for (const i of items) if (i.partId) wanted.set(i.partId, (wanted.get(i.partId) ?? 0) + i.qty);
+  if (wanted.size) {
+    const stockRows = await db
+      .select({ id: parts.id, name: parts.name, stock: parts.stock })
+      .from(parts)
+      .where(inArray(parts.id, [...wanted.keys()]));
+    for (const row of stockRows) {
+      const need = wanted.get(row.id) ?? 0;
+      if (need > row.stock) {
+        return { ok: false, error: `Only ${row.stock} pcs of "${row.name}" left in stock (you tried to sell ${need}).` };
+      }
+    }
+  }
+
   const subtotal = items.reduce((a, i) => a + i.qty * i.price, 0);
-  const discount = Math.max(0, toInt(input.discount, 0));
+  // A discount can never be larger than the bill itself.
+  const discount = Math.min(Math.max(0, toInt(input.discount, 0)), subtotal);
   const total = Math.max(0, subtotal - discount);
   const cost = items.reduce((a, i) => a + i.qty * i.cost, 0);
   const paid = Math.min(total, Math.max(0, toInt(input.paid, total)));
@@ -438,37 +576,56 @@ export async function createSaleRecord(input: SaleInput): Promise<ActionResult> 
 
   const customerId = hasCustomer ? await findOrCreateCustomer(customerName || phone, phone) : null;
 
-  const [s] = await db
-    .insert(sales)
-    .values({
-      customerId,
-      customerName: customerName || "Walk-in",
-      phone,
-      subtotal,
-      discount,
-      total,
-      cost,
-      paid,
-      paymentMode: str(input.paymentMode) || "cash",
-    })
-    .returning();
+  // Everything below runs in ONE transaction and each stock decrement is
+  // guarded by `stock >= qty`, so two tills selling at the same moment can
+  // never push the stock negative — the losing request is rolled back.
+  let saleId = 0;
+  try {
+    await db.transaction(async (tx) => {
+      const [s] = await tx
+        .insert(sales)
+        .values({
+          customerId,
+          customerName: customerName || "Walk-in",
+          phone,
+          subtotal,
+          discount,
+          total,
+          cost,
+          paid,
+          paymentMode: str(input.paymentMode) || "cash",
+        })
+        .returning();
+      saleId = s.id;
 
-  for (const i of items) {
-    await db.insert(saleItems).values({
-      saleId: s.id,
-      partId: i.partId,
-      name: i.name,
-      qty: i.qty,
-      price: i.price,
-      cost: i.cost,
+      for (const i of items) {
+        await tx.insert(saleItems).values({
+          saleId: s.id,
+          partId: i.partId,
+          name: i.name,
+          qty: i.qty,
+          price: i.price,
+          cost: i.cost,
+        });
+        if (i.partId) {
+          const res = await tx
+            .update(parts)
+            .set({ stock: sql`${parts.stock} - ${i.qty}` })
+            .where(and(eq(parts.id, i.partId), sql`${parts.stock} >= ${i.qty}`))
+            .returning({ id: parts.id });
+          if (res.length === 0) throw new OutOfStockError(i.name);
+        }
+      }
     });
-    if (i.partId) {
-      await db.update(parts).set({ stock: sql`${parts.stock} - ${i.qty}` }).where(eq(parts.id, i.partId));
+  } catch (err) {
+    if (err instanceof OutOfStockError) {
+      return { ok: false, error: `"${err.partName}" just went out of stock — please refresh and try again.` };
     }
+    throw err;
   }
 
   refreshAll();
-  return { ok: true, id: s.id, redirectTo: `/sales/${s.id}?new=1` };
+  return { ok: true, id: saleId, redirectTo: `/sales/${saleId}?new=1` };
 }
 
 export async function deleteSaleRecord(data: Record<string, unknown>): Promise<ActionResult> {
@@ -476,6 +633,7 @@ export async function deleteSaleRecord(data: Record<string, unknown>): Promise<A
   const id = toInt(data.id);
   if (!id) return { ok: false, error: "Invalid sale ID" };
 
+  const [sale] = await db.select().from(sales).where(eq(sales.id, id));
   const items = await db.select().from(saleItems).where(eq(saleItems.saleId, id));
   for (const i of items) {
     if (i.partId) {
@@ -483,6 +641,7 @@ export async function deleteSaleRecord(data: Record<string, unknown>): Promise<A
     }
   }
   await db.delete(sales).where(eq(sales.id, id));
+  await cleanupOrphanCustomer(sale?.customerId);
 
   refreshAll();
   return { ok: true, redirectTo: "/sales" };
@@ -516,6 +675,9 @@ export async function addPaymentRecord(data: Record<string, unknown>): Promise<A
   const amount = toInt(data.amount);
   if (!customerId) return { ok: false, error: "Select a customer" };
   if (amount <= 0) return { ok: false, error: "Enter a valid amount" };
+
+  const [cust] = await db.select().from(customers).where(eq(customers.id, customerId));
+  if (!cust) return { ok: false, error: "Customer not found" };
 
   await db.insert(payments).values({
     customerId,
@@ -644,7 +806,6 @@ export async function seedDemoData(): Promise<ActionResult> {
       total,
       partsCost: pc,
       paid,
-      advancePaid: status === "delivered" ? 0 : paid,
       status,
       warrantyDays: type.includes("Screen") || type === "Battery" ? 90 : 30,
       receivedAt: new Date(t.getTime() - day),

@@ -1,6 +1,12 @@
 import { getCustomerBalances } from "@/lib/queries";
 import { parseRequestData, respondResult } from "@/lib/api-body";
-import { saveCustomerRecord, addPaymentRecord, deletePaymentRecord } from "@/lib/shop-service";
+import {
+  saveCustomerRecord,
+  addPaymentRecord,
+  deletePaymentRecord,
+  deleteCustomerRecord,
+  cleanupAllOrphanCustomers,
+} from "@/lib/shop-service";
 
 export const dynamic = "force-dynamic";
 
@@ -26,6 +32,22 @@ export async function POST(req: Request) {
     if (action === "deletePayment") {
       const res = await deletePaymentRecord(data);
       return respondResult(req, res, isJson, "/khata");
+    }
+    if (action === "deleteCustomer") {
+      const res = await deleteCustomerRecord(data);
+      return respondResult(req, res, isJson, "/khata");
+    }
+    if (action === "cleanupOrphans") {
+      const removed = await cleanupAllOrphanCustomers();
+      return respondResult(
+        req,
+        {
+          ok: true,
+          message: removed > 0 ? `Removed ${removed} empty customer record${removed > 1 ? "s" : ""}.` : "No empty customer records found.",
+        },
+        isJson,
+        "/khata"
+      );
     }
     const res = await saveCustomerRecord(data);
     return respondResult(req, res, isJson, "/khata");

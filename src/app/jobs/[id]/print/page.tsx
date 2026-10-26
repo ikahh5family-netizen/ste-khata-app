@@ -1,173 +1,274 @@
+import type { ReactNode } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { db } from "@/db";
 import { ensureSchema } from "@/db/ensure";
 import { repairJobs, jobParts } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { SHOP_NAME, SHOP_FULL_NAME, SHOP_LOGO } from "@/lib/constants";
-import { statusInfo } from "@/lib/constants";
-import { rs, fmtDateTime, fmtDate, jobNo } from "@/lib/format";
+import { SHOP_NAME, SHOP_FULL_NAME, SHOP_PHONE, SHOP_ADDRESS, PRINT_TERMS, statusInfo } from "@/lib/constants";
+import { rs, fmtDateTimeFull, fmtDate, jobNo } from "@/lib/format";
 import { PrintButton } from "@/components/PrintButton";
 import { AppleLogo } from "@/components/ui";
+import { Logo } from "@/components/Logo";
 
 export const dynamic = "force-dynamic";
 
-function Detail({ label, value }: { label: string; value: string }) {
+export default async function PrintJob({ params }: { params: Promise<{ id: string }> }) {
+  await ensureSchema();
+  const id = parseInt((await params).id, 10);
+  if (!Number.isFinite(id)) notFound();
+  const [job] = await db.select().from(repairJobs).where(eq(repairJobs.id, id));
+  if (!job) notFound();
+  const used = await db.select().from(jobParts).where(eq(jobParts.jobId, id));
+
+  const due = Math.max(0, job.total - job.paid);
+  const isBill = job.status === "delivered";
+  const warrantyTill = job.deliveredAt && job.warrantyDays ? new Date(job.deliveredAt.getTime() + job.warrantyDays * 86400000) : null;
+  const status = statusInfo(job.status);
+
   return (
-    <div className="min-w-0">
-      <dt className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">{label}</dt>
-      <dd className="mt-1 break-words text-[13px] font-semibold leading-snug text-[#171717]">{value || "—"}</dd>
+    <div className="mx-auto max-w-[760px]">
+      <div className="no-print mb-4 flex flex-wrap items-center justify-between gap-2">
+        <Link href={`/jobs/${id}`} className="btn-light">
+          ← Back
+        </Link>
+        <div className="text-xs text-slate-500">Tip: print on A4 / A5 — works in black &amp; white too</div>
+        <PrintButton />
+      </div>
+
+      <div className="print-area overflow-hidden rounded-xl border border-neutral-300 bg-white text-neutral-900">
+        {/* ============ HEADER ============ */}
+        <div className="relative overflow-hidden px-6 pt-5 pb-4">
+          {/* corner accent */}
+          <div aria-hidden className="absolute -right-10 -top-12 h-32 w-44 rounded-bl-[100%] bg-orange-500/90 print:bg-black" />
+          <div className="absolute right-5 top-3 text-right">
+            <AppleLogo className="ml-auto h-3.5 w-3.5 text-black print:text-white" />
+            <div className="mt-0.5 text-[8px] font-bold uppercase leading-tight tracking-[0.12em] text-black print:text-white">
+              Customer
+              <br />
+              Copy
+            </div>
+          </div>
+
+          <div className="flex items-start gap-3.5">
+            <Logo className="h-[62px] w-[62px]" rounded="rounded-lg" />
+            <div className="min-w-0 pt-0.5">
+              <div className="text-[8.5px] font-bold uppercase tracking-[0.16em] text-neutral-500">
+                {SHOP_FULL_NAME} · Since 2003
+              </div>
+              <h1 className="mt-0.5 text-[21px] font-extrabold leading-none tracking-tight">{SHOP_NAME}</h1>
+              <div className="mt-1 text-[9.5px] leading-tight text-neutral-500">iPhone repair · Genuine care · Parts &amp; accessories</div>
+            </div>
+          </div>
+        </div>
+
+        {/* orange rule */}
+        <div className="h-[3px] bg-orange-500 print:bg-black" />
+
+        {/* ============ CONTACT STRIP ============ */}
+        <div className="grid grid-cols-[1.9fr_1fr] gap-4 border-b border-neutral-300 px-6 py-2.5">
+          <div>
+            <div className="text-[7.5px] font-bold uppercase tracking-[0.14em] text-orange-600 print:text-black">Visit our shop</div>
+            <div className="mt-0.5 text-[9.5px] leading-snug text-neutral-700">{SHOP_ADDRESS}</div>
+          </div>
+          <div className="text-right">
+            <div className="text-[7.5px] font-bold uppercase tracking-[0.14em] text-orange-600 print:text-black">Call / WhatsApp</div>
+            <div className="mt-0.5 text-[11px] font-bold tabular-nums">{SHOP_PHONE}</div>
+          </div>
+        </div>
+
+        {/* ============ BODY (watermark lives here) ============ */}
+        <div className="relative px-6 py-4">
+          <div aria-hidden className="pointer-events-none absolute inset-0 z-0 flex items-center justify-center overflow-hidden">
+            <span className="select-none text-[120px] font-extrabold leading-none tracking-[0.1em] text-neutral-900/[0.045] print:text-neutral-900/[0.06]">
+              STE
+            </span>
+          </div>
+
+          <div className="relative z-10">
+            {/* ---- invoice no + status ---- */}
+            <div className="flex items-end justify-between gap-4">
+              <div>
+                <div className="text-[7.5px] font-bold uppercase tracking-[0.14em] text-neutral-500">
+                  {isBill ? "Repair Invoice" : "Repair Job Card"}
+                </div>
+                <div className="text-[23px] font-extrabold leading-none tracking-tight">{jobNo(job.id)}</div>
+              </div>
+              <span
+                className={`rounded border px-2.5 py-1 text-[8.5px] font-bold uppercase tracking-[0.12em] ${
+                  isBill ? "border-neutral-900 bg-neutral-900 text-white" : "border-neutral-400 text-neutral-700"
+                }`}
+              >
+                {status.label}
+              </span>
+            </div>
+
+            {/* ---- received / delivered ---- */}
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <Stamp label="Received at · Date & Time" value={fmtDateTimeFull(job.receivedAt)} />
+              <Stamp
+                label="Delivered at · Date & Time"
+                value={job.deliveredAt ? fmtDateTimeFull(job.deliveredAt) : "— pending —"}
+                muted={!job.deliveredAt}
+              />
+            </div>
+
+            {/* ---- customer ---- */}
+            <SectionTitle>Customer Information</SectionTitle>
+            <Panel>
+              <div className="grid grid-cols-2 gap-x-5 gap-y-2.5">
+                <DL label="Customer" value={job.customerName} />
+                <DL label="Contact Number" value={job.phone} />
+              </div>
+            </Panel>
+
+            {/* ---- device ---- */}
+            <SectionTitle>Device &amp; Repair</SectionTitle>
+            <Panel>
+              <div className="grid grid-cols-2 gap-x-5 gap-y-2.5">
+                <DL label="Device Model" value={job.deviceModel} />
+                <DL label="Service Requested" value={job.repairType} />
+                <DL label="IMEI / Serial" value={job.imei} />
+                <DL label="Technician" value={job.technician} />
+                {job.issue && <DL label="Reported Issue" value={job.issue} span />}
+                {job.notes && <DL label="Received Condition / Notes" value={job.notes} span />}
+              </div>
+            </Panel>
+
+            {/* ---- parts ---- */}
+            {used.length > 0 && (
+              <>
+                <SectionTitle>Parts Used</SectionTitle>
+                <div className="overflow-hidden rounded border border-neutral-300">
+                  <table className="w-full border-collapse text-[10px]">
+                    <thead>
+                      <tr className="bg-neutral-100">
+                        <th className="border-b border-neutral-300 px-3 py-1.5 text-left text-[7.5px] font-bold uppercase tracking-[0.12em] text-neutral-600">
+                          Description
+                        </th>
+                        <th className="w-16 border-b border-neutral-300 px-3 py-1.5 text-right text-[7.5px] font-bold uppercase tracking-[0.12em] text-neutral-600">
+                          Qty
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {used.map((u) => (
+                        <tr key={u.id} className="border-b border-neutral-200 last:border-0">
+                          <td className="px-3 py-1.5">{u.name}</td>
+                          <td className="px-3 py-1.5 text-right tabular-nums">{u.qty}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+
+            {/* ---- payment ---- */}
+            <div className="mt-4 overflow-hidden rounded border border-neutral-300">
+              <div className="flex items-center justify-between bg-neutral-900 px-3 py-1.5">
+                <span className="text-[8px] font-bold uppercase tracking-[0.14em] text-white">Payment Summary</span>
+                <span className="text-[8px] font-bold uppercase tracking-[0.14em] text-white/70">PKR</span>
+              </div>
+              <div className="divide-y divide-neutral-200">
+                <PayRow k={isBill ? "Repair total" : "Estimated total"} v={rs(job.total)} />
+                {job.advancePaid > 0 && !isBill && <PayRow k="Advance received" v={rs(job.advancePaid)} />}
+                <PayRow k="Amount received" v={rs(job.paid)} />
+              </div>
+              <div className="flex items-center justify-between border-t-2 border-neutral-900 bg-orange-50 px-3 py-2 print:bg-white">
+                <span className="text-[10.5px] font-extrabold uppercase tracking-wide">Balance due</span>
+                <span className="text-[15px] font-extrabold tabular-nums">{rs(due)}</span>
+              </div>
+            </div>
+
+            {/* ---- warranty ---- */}
+            <div className="mt-3 rounded border border-neutral-300 px-3 py-2">
+              <div className="text-[7.5px] font-bold uppercase tracking-[0.14em] text-orange-600 print:text-black">Repair Warranty</div>
+              <div className="mt-0.5 text-[10px] leading-snug">
+                {job.warrantyDays > 0 ? (
+                  <>
+                    <b>{job.warrantyDays} days</b> on the replaced part
+                    {warrantyTill && (
+                      <>
+                        {" "}
+                        · valid till <b>{fmtDate(warrantyTill)}</b>
+                      </>
+                    )}
+                  </>
+                ) : (
+                  <span className="text-neutral-500">No warranty recorded for this repair</span>
+                )}
+              </div>
+            </div>
+
+            {/* ---- terms ---- */}
+            <ol className="mt-3 list-decimal space-y-0.5 pl-3.5 text-[8px] leading-relaxed text-neutral-600">
+              {PRINT_TERMS.map((t, i) => (
+                <li key={i}>{t}</li>
+              ))}
+            </ol>
+
+            {/* ---- signatures ---- */}
+            <div className="mt-8 grid grid-cols-2 gap-10">
+              <div className="border-t border-neutral-800 pt-1 text-center text-[8.5px] text-neutral-600">Customer Signature</div>
+              <div className="border-t border-neutral-800 pt-1 text-center text-[8.5px] text-neutral-600">For {SHOP_NAME}</div>
+            </div>
+
+            <div className="mt-4 text-center text-[8.5px] font-bold uppercase tracking-[0.16em] text-neutral-500">
+              Thank you for choosing {SHOP_NAME}
+            </div>
+          </div>
+        </div>
+
+        <div className="h-[3px] bg-orange-500 print:bg-black" />
+      </div>
+
+      <p className="no-print mt-3 text-center text-xs text-slate-500">
+        Printing uses a white background and black text, so it stays clear on grayscale printers. To save a PDF, choose
+        &quot;Save as PDF&quot; in the print dialog.
+      </p>
     </div>
   );
 }
 
-export default async function PrintJob({ params }: { params: Promise<{ id: string }> }) {
-  await ensureSchema();
-  const id = Number((await params).id);
-  if (!Number.isSafeInteger(id) || id < 1) notFound();
-  const [job] = await db.select().from(repairJobs).where(eq(repairJobs.id, id));
-  if (!job) notFound();
-  const used = await db.select().from(jobParts).where(eq(jobParts.jobId, id));
-  const balance = Math.max(0, job.total - job.paid);
-  const credit = Math.max(0, job.paid - job.total);
-  const warrantyUntil = job.deliveredAt && job.warrantyDays > 0 ? new Date(job.deliveredAt.getTime() + job.warrantyDays * 86400000) : null;
-  const status = statusInfo(job.status);
+/* ---------- small building blocks ---------- */
 
+function SectionTitle({ children }: { children: ReactNode }) {
   return (
-    <div className="mx-auto max-w-[700px]">
-      <div className="no-print mb-5 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <Link href={`/jobs/${id}`} className="text-sm font-semibold text-orange-700 hover:underline">← Back to job</Link>
-          <p className="mt-1 text-xs text-slate-500">Customer copy · A5 black-and-white / low-ink print layout · Passcode and internal costs are not printed</p>
-        </div>
-        <PrintButton label="🖨️ Print / Save PDF" />
-      </div>
+    <div className="mt-4 mb-1.5 flex items-center gap-1.5">
+      <span className="h-[7px] w-[7px] rotate-45 bg-orange-500 print:bg-black" />
+      <span className="text-[8px] font-bold uppercase tracking-[0.16em] text-neutral-700">{children}</span>
+    </div>
+  );
+}
 
-      <article className="repair-ticket overflow-hidden rounded-[26px] border border-slate-200 bg-white text-[#171717] shadow-xl shadow-slate-200/70">
-        <div className="ticket-brand relative overflow-hidden border-t-[6px] border-orange-500 bg-[#111111] px-5 py-6 text-white sm:px-8">
-          <div className="ticket-ornament pointer-events-none absolute -right-12 -top-20 h-52 w-52 rounded-full border-[28px] border-orange-500/10" aria-hidden="true" />
-          <div className="relative flex items-center justify-between gap-4">
-            <div className="flex min-w-0 items-center gap-3">
-              <div className="ticket-mark shrink-0 rounded-xl border border-orange-400/70 bg-orange-500 p-0.5">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={SHOP_LOGO} alt="STE logo" className="ticket-mark-image h-14 w-14 rounded-[10px] object-cover sm:h-16 sm:w-16" />
-                <span className="ticket-mark-monochrome hidden h-14 w-14 items-center justify-center text-xl font-black tracking-tight" aria-hidden="true">STE</span>
-              </div>
-              <div className="min-w-0">
-                <p className="text-[9px] font-bold uppercase tracking-[0.19em] text-orange-300">{SHOP_FULL_NAME} · Since 2003</p>
-                <h1 className="mt-0.5 truncate text-lg font-black tracking-tight text-white sm:text-2xl">{SHOP_NAME}</h1>
-                <p className="mt-0.5 text-[10px] text-slate-300">iPhone repair · Genuine care · Parts &amp; accessories</p>
-              </div>
-            </div>
-            <div className="shrink-0 text-right">
-              <AppleLogo className="ml-auto h-6 w-6 text-orange-400" />
-              <div className="mt-1 text-[9px] font-bold uppercase tracking-widest text-orange-300">Customer<br />copy</div>
-            </div>
-          </div>
-        </div>
+function Panel({ children }: { children: ReactNode }) {
+  return <div className="rounded border border-neutral-300 px-3.5 py-2.5">{children}</div>;
+}
 
-        <div className="ticket-section ticket-job-band flex flex-wrap items-center justify-between gap-3 border-b border-orange-200 bg-orange-50 px-5 py-4 sm:px-8">
-          <div>
-            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-orange-700">{job.status === "delivered" ? "Repair invoice" : "Repair receipt · Job card"}</p>
-            <div className="mt-1 text-2xl font-black tracking-tight text-[#171717]">{jobNo(job.id)}</div>
-          </div>
-          <div className="text-right">
-            <span className="ticket-status inline-flex rounded-full border border-orange-300 bg-white px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-orange-800">{status.label}</span>
-            <p className="mt-1 text-[11px] text-slate-600">Received {fmtDateTime(job.receivedAt)}</p>
-            {job.deliveredAt && <p className="text-[11px] text-slate-600">Delivered {fmtDateTime(job.deliveredAt)}</p>}
-          </div>
-        </div>
+function DL({ label, value, span }: { label: string; value: string; span?: boolean }) {
+  return (
+    <div className={span ? "col-span-2" : ""}>
+      <dt className="text-[7.5px] font-bold uppercase tracking-[0.12em] text-neutral-500">{label}</dt>
+      <dd className="mt-0.5 break-words text-[11px] font-semibold leading-snug">{value?.trim() ? value : <span className="font-normal text-neutral-400">—</span>}</dd>
+    </div>
+  );
+}
 
-        <div className="space-y-5 px-5 py-5 sm:px-8">
-          <section className="ticket-section">
-            <h2 className="mb-3 flex items-center gap-2 text-[11px] font-black uppercase tracking-[0.16em] text-orange-700">
-              <span className="h-1.5 w-1.5 rounded-full bg-orange-500" /> Customer information
-            </h2>
-            <dl className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-xl border border-slate-200 bg-slate-50/70 p-4">
-              <Detail label="Customer" value={job.customerName} />
-              <Detail label="Contact number" value={job.phone} />
-            </dl>
-          </section>
+function Stamp({ label, value, muted }: { label: string; value: string; muted?: boolean }) {
+  return (
+    <div className="rounded border border-neutral-300 px-3 py-1.5">
+      <div className="text-[7.5px] font-bold uppercase tracking-[0.12em] text-neutral-500">{label}</div>
+      <div className={`mt-0.5 text-[10.5px] font-semibold tabular-nums ${muted ? "text-neutral-400" : ""}`}>{value}</div>
+    </div>
+  );
+}
 
-          <section className="ticket-section">
-            <h2 className="mb-3 flex items-center gap-2 text-[11px] font-black uppercase tracking-[0.16em] text-orange-700">
-              <span className="h-1.5 w-1.5 rounded-full bg-orange-500" /> Device &amp; repair
-            </h2>
-            <dl className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-xl border border-slate-200 p-4">
-              <Detail label="Device model" value={job.deviceModel} />
-              <Detail label="Service requested" value={job.repairType} />
-              <Detail label="IMEI / Serial" value={job.imei} />
-              <Detail label="Technician" value={job.technician} />
-              {job.issue && <div className="col-span-2"><Detail label="Reported issue" value={job.issue} /></div>}
-              {job.notes && <div className="col-span-2"><Detail label="Received condition / notes" value={job.notes} /></div>}
-            </dl>
-          </section>
-
-          {used.length > 0 && (
-            <section className="ticket-section">
-              <h2 className="mb-2 text-[11px] font-black uppercase tracking-[0.16em] text-orange-700">Parts fitted</h2>
-              <ul className="overflow-hidden rounded-xl border border-slate-200 text-[12px]">
-                {used.map((part) => (
-                  <li key={part.id} className="flex justify-between gap-3 border-b border-slate-100 px-4 py-2 last:border-b-0">
-                    <span className="min-w-0 break-words">{part.name}</span>
-                    <span className="shrink-0 font-bold">× {part.qty}</span>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          )}
-
-          <section className="ticket-section ticket-payment overflow-hidden rounded-xl border border-slate-200">
-            <div className="ticket-payment-heading flex items-center justify-between gap-3 bg-[#171717] px-4 py-2.5 text-[11px] font-bold uppercase tracking-[0.12em] text-white">
-              <span>Payment summary</span>
-              <span className="text-orange-300">PKR</span>
-            </div>
-            <dl className="space-y-2 px-4 py-3 text-[12px]">
-              <div className="flex justify-between gap-3"><dt>{job.status === "delivered" ? "Repair total" : "Estimated total"}</dt><dd className="font-bold">{rs(job.total)}</dd></div>
-              <div className="flex justify-between gap-3"><dt>{job.status === "delivered" ? "Amount received" : "Advance received"}</dt><dd className="font-bold">{rs(job.paid)}</dd></div>
-              <div className="ticket-balance flex justify-between gap-3 border-t border-slate-200 pt-2 text-[14px] font-black"><dt>{job.status === "delivered" ? "Balance due" : "Estimated balance"}</dt><dd className="text-orange-700">{rs(balance)}</dd></div>
-              {credit > 0 && <div className="flex justify-between gap-3 text-emerald-700"><dt>Customer credit</dt><dd>{rs(credit)}</dd></div>}
-              {job.status === "cancelled" && (
-                <p className="border-t border-slate-200 pt-2 text-[10px] leading-snug text-slate-600">
-                  Cancelled — this is the original estimate, not a new charge. Any advance or refund must be reconciled separately.
-                </p>
-              )}
-            </dl>
-          </section>
-
-          <section className="ticket-section ticket-warranty flex items-start gap-3 rounded-xl border border-orange-200 bg-orange-50 p-3 text-[12px]">
-            <span className="text-lg" aria-hidden="true">✦</span>
-            <div>
-              <p className="font-bold text-[#171717]">Repair warranty</p>
-              <p className="mt-0.5 text-slate-700">
-                {job.status === "cancelled"
-                  ? "Not applicable to a cancelled repair"
-                  : job.warrantyDays > 0
-                    ? warrantyUntil
-                      ? `${job.warrantyDays} days · valid until ${fmtDate(warrantyUntil)}`
-                      : `${job.warrantyDays} days from the delivery date`
-                    : "No warranty recorded for this repair"}
-              </p>
-            </div>
-          </section>
-
-          <p className="ticket-section text-[10px] leading-relaxed text-slate-600">
-            Keep this receipt and present the job number when collecting your device. Warranty applies to the recorded repair only; physical or water damage
-            is not covered. Please keep a backup of your personal data.
-          </p>
-
-          <div className="ticket-section grid grid-cols-2 gap-8 pt-7 text-[10px] text-slate-600">
-            <div className="border-t border-slate-500 pt-1.5">Customer signature</div>
-            <div className="border-t border-slate-500 pt-1.5">For {SHOP_NAME}</div>
-          </div>
-        </div>
-
-        <div className="ticket-footer border-t border-slate-200 bg-slate-50 px-5 py-3 text-center text-[11px] font-semibold tracking-wide text-slate-600 sm:px-8">
-          THANK YOU FOR CHOOSING STE MOBILE CARE
-        </div>
-        <div className="ticket-bottom-rule h-1.5 bg-orange-500" aria-hidden="true" />
-      </article>
-      <p className="no-print mt-3 text-center text-xs text-slate-500">Printing uses a white background and black text for clear grayscale copies. You can also choose “Save as PDF” in the print dialog.</p>
+function PayRow({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="flex items-center justify-between px-3 py-1.5">
+      <span className="text-[10px] text-neutral-700">{k}</span>
+      <span className="text-[11px] font-semibold tabular-nums">{v}</span>
     </div>
   );
 }

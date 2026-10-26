@@ -21,6 +21,20 @@ export function fmtDateTime(d: Date | string | null | undefined) {
   });
 }
 
+/** Full date + time including the year — used on printed invoices/receipts. */
+export function fmtDateTimeFull(d: Date | string | null | undefined) {
+  if (!d) return "-";
+  const date = typeof d === "string" ? new Date(d) : d;
+  return date.toLocaleString("en-PK", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Asia/Karachi",
+  });
+}
+
 export function jobNo(id: number) {
   return "JOB-" + String(id).padStart(4, "0");
 }

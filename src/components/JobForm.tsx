@@ -19,10 +19,11 @@ type Defaults = Partial<
     | "total"
     | "partsCost"
     | "paid"
-    | "advancePaid"
     | "warrantyDays"
     | "technician"
     | "notes"
+    | "advancePaid"
+    | "status"
   >
 > & { id?: number };
 
@@ -53,6 +54,8 @@ export function JobForm({
   const [deviceModel, setDeviceModel] = useState(defaults.deviceModel ?? "");
   const [repairType, setRepairType] = useState(defaults.repairType ?? "");
   const [total, setTotal] = useState(defaults.total ? String(defaults.total) : "");
+  const paidTotal = defaults.paid ?? 0;
+  const [advance, setAdvance] = useState(defaults.advancePaid ? String(defaults.advancePaid) : "");
 
   function handleCustomerChange(val: string) {
     setCustomerName(val);
@@ -199,6 +202,17 @@ export function JobForm({
       <div className="card space-y-4">
         <h2 className="font-semibold">💰 Charges &amp; Parts</h2>
 
+        {isEdit && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
+            <b>Recorded Advance</b> = the money taken <b>before</b> delivery. Total paid so far is{" "}
+            <b>Rs {paidTotal.toLocaleString("en-PK")}</b>
+            {defaults.status === "delivered" && " (including the amount collected at delivery)"}.
+            <br />
+            If this job was created before advances were tracked, set the correct advance here. If the status is ever changed back from
+            Delivered, the Paid amount will return to this value instead of 0.
+          </div>
+        )}
+
         {!isEdit && stockParts.length > 0 && (
           <Field label="Use a part from your stock? (optional — stock decreases automatically)">
             <select name="stockPartId" defaultValue="" onChange={(e) => handlePartPick(e.target.value)} className="input">
@@ -225,11 +239,6 @@ export function JobForm({
               placeholder="25000"
             />
           </Field>
-          {isEdit && (
-            <Field label="Recorded Advance (Rs)">
-              <input name="advancePaid" type="number" min={0} inputMode="numeric" defaultValue={defaults.advancePaid ?? 0} className="input" placeholder="0" />
-            </Field>
-          )}
           {!isEdit && (
             <>
               <Field label="Advance Received (Rs)">
@@ -239,6 +248,21 @@ export function JobForm({
                 <input name="partsCost" type="number" min={0} inputMode="numeric" defaultValue={defaults.partsCost || ""} className="input" placeholder="0" />
               </Field>
             </>
+          )}
+          {isEdit && (
+            <Field label="Recorded Advance (Rs)">
+              <input
+                name="advancePaid"
+                type="number"
+                min={0}
+                max={paidTotal}
+                inputMode="numeric"
+                value={advance}
+                onChange={(e) => setAdvance(e.target.value)}
+                className="input"
+                placeholder="0"
+              />
+            </Field>
           )}
           <Field label="Warranty (days)">
             <input name="warrantyDays" type="number" min={0} inputMode="numeric" defaultValue={defaults.warrantyDays ?? 30} className="input" />
@@ -250,13 +274,6 @@ export function JobForm({
             <input name="notes" defaultValue={defaults.notes ?? ""} className="input" placeholder="Phone condition, scratches, accessories..." />
           </Field>
         </div>
-        {isEdit && (
-          <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
-            When a delivered job is reopened or cancelled, Paid returns to this recorded advance. For older delivered jobs, the original
-            advance could not be recovered automatically — correct it here before changing status. Editing this value does not undo a real
-            payment or issue a refund.
-          </p>
-        )}
       </div>
 
       <button type="submit" className="btn-primary w-full py-3 text-base sm:w-auto">

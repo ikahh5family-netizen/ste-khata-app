@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { PageHeader, StatCard, Empty } from "@/components/ui";
-import { ApiForm } from "@/components/ApiForm";
+import { ApiForm, ApiActionButton } from "@/components/ApiForm";
 import { getCustomerBalances } from "@/lib/queries";
 import { rs, waLink } from "@/lib/format";
 import { SHOP_NAME } from "@/lib/constants";
@@ -15,6 +15,8 @@ export default async function KhataPage({ searchParams }: { searchParams: Promis
   let list = all ? balances : debtors;
   if (q) list = balances.filter((b) => `${b.name} ${b.phone}`.toLowerCase().includes(q.toLowerCase()));
   list = [...list].sort((a, b) => b.balance - a.balance);
+  // Customers left behind after all their jobs/sales were deleted.
+  const emptyCustomers = balances.filter((b) => b.jobs === 0 && b.salesCount === 0 && b.balance === 0 && b.paid === 0);
 
   return (
     <div>
@@ -44,6 +46,18 @@ export default async function KhataPage({ searchParams }: { searchParams: Promis
           </ApiForm>
         </details>
       </div>
+
+      {emptyCustomers.length > 0 && (
+        <div className="card mb-4 flex flex-col gap-2 border-amber-200 bg-amber-50 sm:flex-row sm:items-center sm:justify-between">
+          <div className="text-sm text-amber-900">
+            🧹 <b>{emptyCustomers.length} empty customer record{emptyCustomers.length > 1 ? "s" : ""}</b> left over after deleting jobs/sales (no
+            jobs, no sales, no payments).
+          </div>
+          <ApiActionButton endpoint="/api/khata" payload={{ action: "cleanupOrphans" }} loadingText="Cleaning..." className="btn-light shrink-0">
+            Clean up now
+          </ApiActionButton>
+        </div>
+      )}
 
       {list.length === 0 ? (
         <Empty text={all || q ? "No customer found." : "🎉 No dues from anyone!"} />

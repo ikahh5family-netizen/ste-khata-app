@@ -1,9 +1,9 @@
 "use client";
 
-export function PrintButton({ label = "🖨️ Print" }: { label?: string }) {
+export function PrintButton() {
   return (
-    <button type="button" onClick={() => window.print()} className="btn-primary">
-      {label}
+    <button onClick={() => window.print()} className="btn-primary">
+      🖨️ Print
     </button>
   );
 }

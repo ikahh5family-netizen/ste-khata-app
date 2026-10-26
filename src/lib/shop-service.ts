@@ -12,7 +12,8 @@ import {
   expenses,
   purchases,
 } from "@/db/schema";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
+import { JOB_STATUSES } from "@/lib/constants";
 import { revalidatePath } from "next/cache";
 import { str, toInt } from "@/lib/format";
 
@@ -91,6 +92,7 @@ export async function createJobRecord(data: Record<string, unknown>): Promise<Ac
     }
   }
 
+  const advancePaid = Math.max(0, toInt(data.paid, 0));
   const customerId = await findOrCreateCustomer(customerName, phone);
   const [job] = await db
     .insert(repairJobs)
@@ -105,9 +107,8 @@ export async function createJobRecord(data: Record<string, unknown>): Promise<Ac
       issue: str(data.issue),
       total: Math.max(0, toInt(data.total, 0)),
       partsCost: Math.max(0, extraPartsCost),
-      paid: Math.max(0, toInt(data.paid, 0)),
-      // The money taken when the phone is received is the advance.
-      advancePaid: Math.max(0, toInt(data.paid, 0)),
+      paid: advancePaid,
+      advancePaid,
       warrantyDays: Math.max(0, toInt(data.warrantyDays, 30)),
       technician: str(data.technician),
       notes: str(data.notes),
@@ -146,6 +147,13 @@ export async function updateJobRecord(data: Record<string, unknown>): Promise<Ac
     return { ok: false, error: "Model and repair type are required" };
   }
 
+  const [existing] = await db.select({ paid: repairJobs.paid, status: repairJobs.status }).from(repairJobs).where(eq(repairJobs.id, id));
+  if (!existing) return { ok: false, error: "Job not found" };
+  const correctedAdvance = data.advancePaid !== undefined ? Math.max(0, toInt(data.advancePaid, 0)) : null;
+  if (correctedAdvance !== null && existing.status === "delivered" && correctedAdvance > existing.paid) {
+    return { ok: false, error: "Recorded advance cannot exceed the amount already paid" };
+  }
+
   const customerId = await findOrCreateCustomer(customerName, phone);
   await db
     .update(repairJobs)
@@ -159,6 +167,11 @@ export async function updateJobRecord(data: Record<string, unknown>): Promise<Ac
       repairType,
       issue: str(data.issue),
       total: Math.max(0, toInt(data.total, 0)),
+      ...(correctedAdvance === null ? {} : {
+        advancePaid: correctedAdvance,
+        // Delivered receipts stay intact; before delivery, Paid equals the corrected advance.
+        paid: sql`CASE WHEN ${repairJobs.status} = 'delivered' THEN ${repairJobs.paid} ELSE ${correctedAdvance} END`,
+      }),
       warrantyDays: Math.max(0, toInt(data.warrantyDays, 0)),
       technician: str(data.technician),
       notes: str(data.notes),
@@ -173,66 +186,51 @@ export async function setJobStatusRecord(data: Record<string, unknown>): Promise
   await ensureSchema();
   const id = toInt(data.id);
   const status = str(data.status);
-  if (!id || !status) return { ok: false, error: "Invalid status update" };
+  if (!id || !JOB_STATUSES.some((item) => item.value === status)) return { ok: false, error: "Invalid status update" };
 
-  const [job] = await db.select().from(repairJobs).where(eq(repairJobs.id, id));
-  if (!job) return { ok: false, error: "Job not found" };
-
-  if (status === "delivered") {
-    // Moving TO delivered via the status chips: keep whatever has been paid so
-    // far (the advance). Collecting the balance is done in the Deliver form.
-    await db
-      .update(repairJobs)
-      .set({ status, deliveredAt: new Date() })
-      .where(eq(repairJobs.id, id));
-    refreshAll();
-    return { ok: true, id, message: "Marked as delivered." };
-  }
-
-  // Moving BACK to a non-delivered status (Received / In Progress /
-  // Waiting Part / Cancelled): the delivery payment is no longer valid, so
-  // `paid` reverts to the advance that was actually taken, and `due` grows
-  // back automatically. Print receipt reads these same fields.
-  const advance = Math.max(0, job.advancePaid);
-  const reverted = job.paid !== advance;
-
-  await db
+  // This update is atomic: on leaving Delivered, remove only the money attributed
+  // to delivery and leave the original advance intact. Non-delivered changes do
+  // not invent a payment, and selecting Delivered does not auto-collect money.
+  const [updated] = await db
     .update(repairJobs)
-    .set({ status, deliveredAt: null, paid: advance })
-    .where(eq(repairJobs.id, id));
+    .set({
+      status,
+      deliveredAt: status === "delivered" ? sql`coalesce(${repairJobs.deliveredAt}, now())` : null,
+      paid: status === "delivered"
+        ? sql`${repairJobs.paid}`
+        : sql`CASE WHEN ${repairJobs.status} = 'delivered' THEN ${repairJobs.advancePaid} ELSE ${repairJobs.paid} END`,
+    })
+    .where(eq(repairJobs.id, id))
+    .returning({ id: repairJobs.id });
+  if (!updated) return { ok: false, error: "Job not found" };
 
   refreshAll();
-  return {
-    ok: true,
-    id,
-    message: reverted
-      ? `Status changed — Paid reset to the advance (${advance > 0 ? "Rs " + advance.toLocaleString("en-PK") : "Rs 0"}).`
-      : "Status updated.",
-  };
+  return { ok: true, id };
 }
 
 export async function deliverJobRecord(data: Record<string, unknown>): Promise<ActionResult> {
   await ensureSchema();
   const id = toInt(data.id);
+  if (!id) return { ok: false, error: "Invalid job ID" };
   const receive = Math.max(0, toInt(data.receive, 0));
   const finalTotal = data.total !== undefined && data.total !== null && str(data.total) !== "" ? Math.max(0, toInt(data.total)) : null;
 
-  const [job] = await db.select().from(repairJobs).where(eq(repairJobs.id, id));
-  if (!job) return { ok: false, error: "Job not found" };
-
-  // `advancePaid` stays as the pre-delivery amount so the payment collected
-  // at delivery can be rolled back if the status is changed again later.
-  const advance = Math.max(0, job.advancePaid);
-  await db
+  // A double tap / repeated request cannot charge the customer twice.
+  const [updated] = await db
     .update(repairJobs)
     .set({
       status: "delivered",
       deliveredAt: new Date(),
-      paid: advance + receive,
+      paid: sql`${repairJobs.paid} + ${receive}`,
       ...(finalTotal !== null ? { total: finalTotal } : {}),
     })
-    .where(eq(repairJobs.id, id));
+    .where(and(eq(repairJobs.id, id), ne(repairJobs.status, "delivered"), ne(repairJobs.status, "cancelled")))
+    .returning({ id: repairJobs.id });
 
+  if (!updated) {
+    const [job] = await db.select({ status: repairJobs.status }).from(repairJobs).where(eq(repairJobs.id, id));
+    return { ok: false, error: !job ? "Job not found" : job.status === "cancelled" ? "Reopen this cancelled job before delivery" : "This job is already delivered; payment was not added twice" };
+  }
   refreshAll();
   return { ok: true, id, message: "Phone marked as delivered!" };
 }
@@ -243,23 +241,19 @@ export async function addJobPaymentRecord(data: Record<string, unknown>): Promis
   const amount = toInt(data.amount);
   if (!id || amount <= 0) return { ok: false, error: "Enter a valid payment amount" };
 
-  const [job] = await db.select().from(repairJobs).where(eq(repairJobs.id, id));
-  if (!job) return { ok: false, error: "Job not found" };
-
-  // A payment taken while the phone is still in the shop counts as advance,
-  // so it survives any later status change. After delivery it is a final
-  // settlement and only increases `paid`.
-  const isDelivered = job.status === "delivered";
-  await db
+  const [updated] = await db
     .update(repairJobs)
     .set({
       paid: sql`${repairJobs.paid} + ${amount}`,
-      ...(isDelivered ? {} : { advancePaid: sql`${repairJobs.advancePaid} + ${amount}` }),
+      // Any money received before delivery is an advance, not a delivery payment.
+      advancePaid: sql`CASE WHEN ${repairJobs.status} = 'delivered' THEN ${repairJobs.advancePaid} ELSE ${repairJobs.advancePaid} + ${amount} END`,
     })
-    .where(eq(repairJobs.id, id));
+    .where(eq(repairJobs.id, id))
+    .returning({ id: repairJobs.id });
+  if (!updated) return { ok: false, error: "Job not found" };
 
   refreshAll();
-  return { ok: true, id, message: "Payment added!" };
+  return { ok: true, id, message: "Payment recorded" };
 }
 
 export async function addJobPartRecord(data: Record<string, unknown>): Promise<ActionResult> {
@@ -650,6 +644,7 @@ export async function seedDemoData(): Promise<ActionResult> {
       total,
       partsCost: pc,
       paid,
+      advancePaid: status === "delivered" ? 0 : paid,
       status,
       warrantyDays: type.includes("Screen") || type === "Battery" ? 90 : 30,
       receivedAt: new Date(t.getTime() - day),

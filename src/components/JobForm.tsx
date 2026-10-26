@@ -19,6 +19,7 @@ type Defaults = Partial<
     | "total"
     | "partsCost"
     | "paid"
+    | "advancePaid"
     | "warrantyDays"
     | "technician"
     | "notes"
@@ -224,6 +225,11 @@ export function JobForm({
               placeholder="25000"
             />
           </Field>
+          {isEdit && (
+            <Field label="Recorded Advance (Rs)">
+              <input name="advancePaid" type="number" min={0} inputMode="numeric" defaultValue={defaults.advancePaid ?? 0} className="input" placeholder="0" />
+            </Field>
+          )}
           {!isEdit && (
             <>
               <Field label="Advance Received (Rs)">
@@ -244,6 +250,13 @@ export function JobForm({
             <input name="notes" defaultValue={defaults.notes ?? ""} className="input" placeholder="Phone condition, scratches, accessories..." />
           </Field>
         </div>
+        {isEdit && (
+          <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
+            When a delivered job is reopened or cancelled, Paid returns to this recorded advance. For older delivered jobs, the original
+            advance could not be recovered automatically — correct it here before changing status. Editing this value does not undo a real
+            payment or issue a refund.
+          </p>
+        )}
       </div>
 
       <button type="submit" className="btn-primary w-full py-3 text-base sm:w-auto">

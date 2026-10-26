@@ -92,7 +92,11 @@ export async function POST(req: Request) {
             total: num(r.total),
             partsCost: num(r.partsCost),
             paid: num(r.paid),
-            advancePaid: num(r.advancePaid, str(r.status) === "delivered" ? 0 : num(r.paid)),
+            // v1 backups predate advance tracking. Undelivered Paid is the
+            // best-known advance; delivered historical advances are unknown.
+            advancePaid: r.advancePaid == null
+              ? r.status === "delivered" ? 0 : Math.max(0, num(r.paid))
+              : Math.max(0, num(r.advancePaid)),
             warrantyDays: num(r.warrantyDays),
             technician: str(r.technician),
             notes: str(r.notes),

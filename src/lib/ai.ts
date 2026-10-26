@@ -15,8 +15,17 @@ import {
 import { rs, startOfDayPK, startOfMonthPK, daysAgoPK, jobNo } from "./format";
 import { IPHONE_MODELS, REPAIR_TYPES, EXPENSE_CATEGORIES } from "./constants";
 
+export type AiProvider = "built-in" | "mistral-large-4" | "openai";
+
+export function aiAvailability() {
+  return {
+    mistral: Boolean(process.env.MISTRAL_API_KEY),
+    openai: Boolean(process.env.OPENAI_API_KEY),
+  };
+}
+
 export function aiEnabled() {
-  return Boolean(process.env.OPENAI_API_KEY);
+  return Boolean(process.env.MISTRAL_API_KEY || process.env.OPENAI_API_KEY);
 }
 
 async function snapshot() {
@@ -85,33 +94,47 @@ function contextText(s: Snap) {
   ].join("\n");
 }
 
-async function callOpenAI(messages: { role: string; content: string }[], json = false): Promise<string | null> {
-  const key = process.env.OPENAI_API_KEY;
+async function callModel(messages: { role: string; content: string }[], json: boolean, provider: AiProvider): Promise<string | null> {
+  // The browser sends only the provider ID; credentials never leave this server.
+  const mistral = provider === "mistral-large-4";
+  const key = mistral ? process.env.MISTRAL_API_KEY : provider === "openai" ? process.env.OPENAI_API_KEY : undefined;
   if (!key) return null;
-  const base = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
+  const endpoint = mistral
+    ? "https://api.mistral.ai/v1/chat/completions"
+    : `${(process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "")}/chat/completions`;
   try {
-    const res = await fetch(`${base}/chat/completions`, {
+    const res = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
       body: JSON.stringify({
-        model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+        model: mistral ? "mistral-large-4" : process.env.OPENAI_MODEL || "gpt-4o-mini",
         messages,
         temperature: 0.3,
         ...(json ? { response_format: { type: "json_object" } } : {}),
       }),
+      signal: AbortSignal.timeout(40000),
     });
-    if (!res.ok) return null;
-    const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-    return data.choices?.[0]?.message?.content ?? null;
-  } catch {
+    if (!res.ok) {
+      console.warn(`${provider} AI request failed with status ${res.status}`);
+      return null;
+    }
+    const data = (await res.json()) as { choices?: { message?: { content?: string | { type?: string; text?: string }[] } }[] };
+    const content = data.choices?.[0]?.message?.content;
+    return typeof content === "string" ? content : Array.isArray(content) ? content.map((part) => part.text ?? "").join("") || null : null;
+  } catch (err) {
+    console.warn(`${provider} AI request unavailable:`, err instanceof Error ? err.name : "error");
     return null;
   }
 }
 
-export async function answerQuestion(question: string, history: { role: "user" | "assistant"; content: string }[] = []) {
+export async function answerQuestion(
+  question: string,
+  history: { role: "user" | "assistant"; content: string }[] = [],
+  provider: AiProvider = "built-in"
+) {
   const s = await snapshot();
-  if (aiEnabled()) {
-    const reply = await callOpenAI([
+  if (provider !== "built-in") {
+    const reply = await callModel([
       {
         role: "system",
         content:
@@ -120,17 +143,17 @@ export async function answerQuestion(question: string, history: { role: "user" |
       },
       ...history.slice(-8),
       { role: "user", content: question },
-    ]);
+    ], false, provider);
     if (reply) return reply;
   }
-  return ruleAnswer(question, s);
+  return ruleAnswer(question, s, provider !== "built-in");
 }
 
 function has(q: string, words: string[]) {
   return words.some((w) => q.includes(w));
 }
 
-function ruleAnswer(question: string, s: Snap): string {
+function ruleAnswer(question: string, s: Snap, modelUnavailable = false): string {
   const q = question.toLowerCase();
   const parts: string[] = [];
 
@@ -186,7 +209,7 @@ function ruleAnswer(question: string, s: Snap): string {
       if (tips.length) parts.push("💡 **Suggestions:**\n" + tips.map((t) => "• " + t).join("\n"));
     }
   }
-  if (!aiEnabled()) parts.push("_(Built-in AI mode. Set OPENAI_API_KEY for smarter answers.)_");
+  parts.push(modelUnavailable ? "_(Built-in response: the selected AI provider was unavailable.)_" : "_(Built-in shop insights.)_");
   return parts.join("\n\n");
 }
 
@@ -315,9 +338,9 @@ function ruleParse(text: string): ParsedEntry {
   };
 }
 
-export async function parseEntry(text: string): Promise<ParsedEntry> {
-  if (aiEnabled()) {
-    const out = await callOpenAI(
+export async function parseEntry(text: string, provider: AiProvider = "built-in"): Promise<ParsedEntry> {
+  if (provider !== "built-in") {
+    const out = await callModel(
       [
         {
           role: "system",
@@ -331,7 +354,8 @@ Types:
         },
         { role: "user", content: text },
       ],
-      true
+      true,
+      provider
     );
     if (out) {
       try {

@@ -1,4 +1,4 @@
-import { parseEntry } from "@/lib/ai";
+import { parseEntry, type AiProvider } from "@/lib/ai";
 import { db } from "@/db";
 import { ensureSchema } from "@/db/ensure";
 import { customers } from "@/db/schema";
@@ -9,10 +9,11 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request) {
   try {
     await ensureSchema();
-    const { text } = (await req.json()) as { text?: string };
+    const { text, provider } = (await req.json()) as { text?: string; provider?: string };
     const t = String(text ?? "").slice(0, 1000).trim();
     if (!t) return Response.json({ error: "Please type something" }, { status: 400 });
-    const parsed = await parseEntry(t);
+    const selectedProvider: AiProvider = provider === "mistral-large-4" || provider === "openai" ? provider : "built-in";
+    const parsed = await parseEntry(t, selectedProvider);
     let matches: { id: number; name: string; phone: string }[] = [];
     if (parsed.type === "payment" && parsed.customerName) {
       const first = parsed.customerName.split(/\s+/)[0];

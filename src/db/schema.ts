@@ -34,8 +34,7 @@ export const repairJobs = pgTable("repair_jobs", {
   total: integer("total").notNull().default(0),
   partsCost: integer("parts_cost").notNull().default(0),
   paid: integer("paid").notNull().default(0),
-  // Amount received BEFORE delivery (the advance). Used to correctly revert
-  // `paid` when a delivered job is moved back to a non-delivered status.
+  // Advance actually received before delivery; used when a delivered job is reopened.
   advancePaid: integer("advance_paid").notNull().default(0),
   warrantyDays: integer("warranty_days").notNull().default(0),
   technician: text("technician").notNull().default(""),

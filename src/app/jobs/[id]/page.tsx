@@ -92,13 +92,6 @@ export default async function JobDetail({
             </ApiActionButton>
           ))}
         </div>
-        {job.status === "delivered" && (
-          <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs leading-relaxed text-amber-900">
-            Reopening or cancelling resets Paid to the recorded advance ({rs(job.advancePaid)}) and recalculates Due. For older delivered jobs,
-            verify the advance in <Link href={`/jobs/${job.id}/edit`} className="font-bold underline">Edit Job</Link> first. Changing status
-            does not issue a cash refund; reconcile any money actually received separately.
-          </p>
-        )}
       </div>
 
       <div className="grid gap-4 lg:grid-cols-5">
@@ -112,7 +105,7 @@ export default async function JobDetail({
               <div>
                 <div className="text-xs text-slate-500">Paid</div>
                 <div className="text-lg font-bold text-emerald-600">{rs(job.paid)}</div>
-                <div className="text-[11px] text-slate-400">Advance {rs(job.advancePaid)}</div>
+                {job.advancePaid > 0 && <div className="text-[11px] text-slate-400">Advance {rs(job.advancePaid)}</div>}
               </div>
               <div>
                 <div className="text-xs text-slate-500">Due</div>
@@ -125,12 +118,6 @@ export default async function JobDetail({
               </div>
             </div>
 
-            {job.status === "cancelled" && (
-              <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                Cancelled: the remaining balance is based on the original estimate, not a new amount to collect. Reconcile any real advance or refund separately.
-              </p>
-            )}
-
             {job.status !== "delivered" && job.status !== "cancelled" && (
               <ApiForm endpoint="/api/jobs" actionName="deliver" className="mt-4 rounded-xl bg-emerald-50 p-3">
                 <input type="hidden" name="id" value={job.id} />
@@ -142,13 +129,13 @@ export default async function JobDetail({
                   </label>
                   <label>
                     <span className="label">Received Now (Rs)</span>
-                    <input name="receive" type="number" min={0} inputMode="numeric" defaultValue={0} className="input" />
+                    <input name="receive" type="number" defaultValue={Math.max(0, due)} className="input" />
                   </label>
                   <button type="submit" className="btn-green col-span-2 self-end sm:col-span-1">
                     Delivered ✅
                   </button>
                 </div>
-                <p className="mt-2 text-xs text-emerald-700">Enter only money actually received now. Leave 0 if unpaid; delivery never assumes full payment. Remaining balance appears in Khata (credit).</p>
+                <p className="mt-2 text-xs text-emerald-700">If less is paid, the remaining amount is added to the customer&apos;s Khata (credit).</p>
               </ApiForm>
             )}
 

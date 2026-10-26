@@ -5,8 +5,11 @@ import { asc } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
-/** Online backup of all live PostgreSQL records. The JSON is unencrypted and
- * may contain private customer information; prevent caching at every layer. */
+/**
+ * Full data backup as JSON. Shop owner can download this anytime from the
+ * Help page and keep it safe (WhatsApp/Google Drive/USB). Data yahan se
+ * dobara import karne ka option baad mein add kiya ja sakta hai.
+ */
 export async function GET() {
   try {
     await ensureSchema();
@@ -24,7 +27,7 @@ export async function GET() {
 
     const backup = {
       app: "STE Mobile Care",
-      version: 2,
+      version: 1,
       exportedAt: new Date().toISOString(),
       counts: {
         customers: c.length,
@@ -56,12 +59,10 @@ export async function GET() {
       headers: {
         "Content-Type": "application/json; charset=utf-8",
         "Content-Disposition": `attachment; filename="${fileName}"`,
-        "Cache-Control": "private, no-store, max-age=0",
-        "X-Content-Type-Options": "nosniff",
       },
     });
   } catch (err) {
     console.error("GET /api/backup error:", err);
-    return Response.json({ ok: false, error: "Backup could not be created" }, { status: 500 });
+    return Response.json({ ok: false, error: "Backup nahi ban saka" }, { status: 500 });
   }
 }

@@ -40,10 +40,10 @@ export function ensureSchema(): Promise<void> {
           issue TEXT NOT NULL DEFAULT '',
           status VARCHAR(20) NOT NULL DEFAULT 'received',
           total INTEGER NOT NULL DEFAULT 0,
-           parts_cost INTEGER NOT NULL DEFAULT 0,
-           paid INTEGER NOT NULL DEFAULT 0,
-           advance_paid INTEGER NOT NULL DEFAULT 0,
-           warranty_days INTEGER NOT NULL DEFAULT 0,
+          parts_cost INTEGER NOT NULL DEFAULT 0,
+          paid INTEGER NOT NULL DEFAULT 0,
+          advance_paid INTEGER NOT NULL DEFAULT 0,
+          warranty_days INTEGER NOT NULL DEFAULT 0,
           technician TEXT NOT NULL DEFAULT '',
           notes TEXT NOT NULL DEFAULT '',
           received_at TIMESTAMP NOT NULL DEFAULT NOW(),
@@ -100,27 +100,30 @@ export function ensureSchema(): Promise<void> {
           created_at TIMESTAMP NOT NULL DEFAULT NOW()
         );
 
-         CREATE TABLE IF NOT EXISTS purchases (
-           id SERIAL PRIMARY KEY,
-           part_id INTEGER REFERENCES parts(id) ON DELETE SET NULL,
-           part_name TEXT NOT NULL,
-           supplier TEXT NOT NULL DEFAULT '',
-           qty INTEGER NOT NULL,
-           unit_cost INTEGER NOT NULL,
-           total INTEGER NOT NULL,
-           created_at TIMESTAMP NOT NULL DEFAULT NOW()
-         );
+        CREATE TABLE IF NOT EXISTS purchases (
+          id SERIAL PRIMARY KEY,
+          part_id INTEGER REFERENCES parts(id) ON DELETE SET NULL,
+          part_name TEXT NOT NULL,
+          supplier TEXT NOT NULL DEFAULT '',
+          qty INTEGER NOT NULL,
+          unit_cost INTEGER NOT NULL,
+          total INTEGER NOT NULL,
+          created_at TIMESTAMP NOT NULL DEFAULT NOW()
+        );
+      `);
 
-         -- Existing undelivered jobs: the currently recorded payment is their
-         -- best-known advance. Delivered legacy jobs have no recoverable
-         -- initial advance, so default to zero until corrected in Job Edit.
-         ALTER TABLE repair_jobs ADD COLUMN IF NOT EXISTS advance_paid INTEGER;
-         UPDATE repair_jobs
-            SET advance_paid = CASE WHEN status = 'delivered' THEN 0 ELSE GREATEST(paid, 0) END
-          WHERE advance_paid IS NULL;
-         ALTER TABLE repair_jobs ALTER COLUMN advance_paid SET DEFAULT 0;
-         ALTER TABLE repair_jobs ALTER COLUMN advance_paid SET NOT NULL;
-       `);
+      // --- Migrations for databases created before a column existed ---
+      await pool.query(`
+        ALTER TABLE repair_jobs ADD COLUMN IF NOT EXISTS advance_paid INTEGER NOT NULL DEFAULT 0;
+      `);
+      // Backfill advance_paid once: for jobs not yet delivered the whole paid
+      // amount IS the advance. Delivered jobs keep 0 so that reverting them
+      // clears the delivery payment (as requested).
+      await pool.query(`
+        UPDATE repair_jobs
+        SET advance_paid = paid
+        WHERE advance_paid = 0 AND paid > 0 AND status <> 'delivered';
+      `);
     })().catch((err) => {
       globalForSchema.__steSchemaReady = undefined;
       throw err;

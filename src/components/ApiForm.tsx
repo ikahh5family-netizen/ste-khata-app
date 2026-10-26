@@ -94,7 +94,7 @@ export function ApiForm({
       </fieldset>
       {submitting && (
         <div className="mt-2 text-xs font-medium text-indigo-600 animate-pulse">
-          ⏳ Saving...
+          ⏳ Save ho raha hai...
         </div>
       )}
       {error && (

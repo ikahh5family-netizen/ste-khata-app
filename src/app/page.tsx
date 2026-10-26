@@ -6,7 +6,7 @@ import { desc, inArray, sql } from "drizzle-orm";
 import { PageHeader, StatCard, StatusBadge, AppleLogo } from "@/components/ui";
 import { ApiActionButton } from "@/components/ApiForm";
 import { BackupRestoreCard } from "@/components/BackupRestore";
-import { ShareAppLink } from "@/components/ShareAppLink";
+import { Logo } from "@/components/Logo";
 import { getStats, getTotalUdhaar, getJobStatusCounts, getLowStock, getLast7Days } from "@/lib/queries";
 import { rs, startOfDayPK, startOfMonthPK, jobNo, fmtDate } from "@/lib/format";
 import { getQuickInsights } from "@/lib/ai";
@@ -57,14 +57,12 @@ export default async function Dashboard() {
         }
       />
 
-      <ShareAppLink />
       <BackupRestoreCard />
 
       {isEmpty && (
         <div className="card mb-5 flex flex-col items-start gap-3 border-orange-200 bg-orange-50 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-start gap-3">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/logo.png" alt="STE Logo" width={48} height={48} className="h-12 w-12 shrink-0 rounded-xl object-cover shadow" />
+            <Logo className="h-12 w-12 shadow" />
             <div>
               <div className="font-semibold text-orange-900">STE Mobile Care — How to get started?</div>
               <div className="text-sm text-orange-800">Add your stock or a new repair job, or load demo data to try the app.</div>
